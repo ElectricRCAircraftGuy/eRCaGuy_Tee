@@ -46,7 +46,8 @@ print("This will be printed to the console and written to the file.")
 print("Another line of output.")
 colors.print_red("This will be printed to the console and written to the file. It is red.")
 
-# Since we set `redirect_stderr=True`, this will be written both to the console and to the file too.
+# Since we set `redirect_stderr=True`, this will be written both to the console and to 
+# the file too.
 print("This is stderr output.", file=sys.stderr)
 
 tee.end()  # close the file and stop redirecting stdout and stderr to it
