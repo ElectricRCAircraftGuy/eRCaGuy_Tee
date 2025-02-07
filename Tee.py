@@ -41,7 +41,8 @@ def MiB_to_bytes(MiB):
 MAX_LOGFILE_SIZE_BYTES = MiB_to_bytes(25)
 
 class Tee:
-    def __init__(self, *paths, append_lognum=True, immediately_flush=False, redirect_stderr=True):
+    def __init__(self, *paths, append_lognum=True, immediately_flush=False, redirect_stderr=True,
+                 max_logfile_size_bytes=MAX_LOGFILE_SIZE_BYTES):
         """
         Create a Tee object that writes to multiple files, as specified by the paths passed in.
 
@@ -49,7 +50,7 @@ class Tee:
         - paths: one or more paths to write to, as an `os.path` path object or string.
         - append_lognum: if True, append a log number to the end of the file name, just before the 
           extension, starting at 1, and incrementing by 1 each time a new file is created by 
-          a manual call to `next_logfile()`. 
+          a manual call to `next_logfiles()`. 
             So, if you use `append_lognum=True`, then the log file names as they increment will be
             like this:
             - `my_log_1.log`
@@ -85,6 +86,7 @@ class Tee:
         self.append_lognum = append_lognum
         self.immediately_flush = immediately_flush
         self.redirect_stderr = redirect_stderr
+        self.max_logfile_size_bytes = max_logfile_size_bytes
 
     def _get_numbered_path(self, path_original, logfile_number):
         """
@@ -126,22 +128,24 @@ class Tee:
             self.stderr_bak = sys.stderr
             sys.stderr = self
 
-    def next_logfile(self, max_size_bytes=MAX_LOGFILE_SIZE_BYTES):
+    def next_logfiles(self):
         """
-        Check all open log files, and if any are larger than `max_size_bytes`, close them and open
-        new log files with incremented log numbers. 
+        Check all open log files, and if any are larger than `self.max_logfile_size_bytes`, close
+        them and open new log files with incremented log numbers. 
         """
         for i, f in enumerate(self.logfiles):
             # See: https://stackoverflow.com/a/283719/4561887
             file_size_bytes = f.tell()
 
-            if file_size_bytes > max_size_bytes:
+            if file_size_bytes > self.max_logfile_size_bytes:
                 f.close()
 
                 # Open a new file with the next log number
                 self.logfile_numbers[i] += 1
                 new_path = self._get_numbered_path(self.PATHS[i], self.logfile_numbers[i])
                 self.logfiles[i] = open(new_path, "w")
+                
+                print(f"Opened new log file at: {new_path}")
 
     def get_logfile_names(self):
         """
@@ -210,11 +214,11 @@ def main():
     colors.print_red("This will be printed to the console and written to the file. It is red.")
     print()
 
-    tee.next_logfile(MAX_SIZE_BYTES)
+    tee.next_logfiles(MAX_SIZE_BYTES)
     logfile_names = tee.get_logfile_names()
     print(f"logfile_names: {logfile_names}")
 
-    tee.next_logfile(MAX_SIZE_BYTES)
+    tee.next_logfiles(MAX_SIZE_BYTES)
     logfile_names = tee.get_logfile_names()
     print(f"logfile_names: {logfile_names}")
 
