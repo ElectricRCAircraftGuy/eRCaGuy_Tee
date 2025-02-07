@@ -58,3 +58,8 @@ print("This is stderr output.", file=sys.stderr)
 
 tee.end()  # close the file and stop redirecting stdout and stderr to it
 ```
+
+
+# References
+
+1. Originally written in and copied from my other repo, here: https://github.com/ElectricRCAircraftGuy/eRCaGuy_PathShortener/blob/main/Tee.py
