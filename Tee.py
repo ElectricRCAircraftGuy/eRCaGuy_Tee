@@ -22,7 +22,7 @@ sys.path.insert(0, f"{SCRIPT_DIRECTORY}")
 
 
 # local imports
-import ansi_colors as colors
+import eRCaGuy_PyColors.ansi_colors as colors
 
 # 3rd party imports
 # NA

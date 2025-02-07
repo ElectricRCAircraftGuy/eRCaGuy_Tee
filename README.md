@@ -5,7 +5,7 @@
 A Python `tee` program to easily tee all print statements both to stdout **and** to a log file. 
 
 
-# Clone
+# Clone and run
 
 ```bash
 # clone the repo
@@ -16,6 +16,12 @@ cd eRCaGuy_Tee
 
 # clone all submodules
 git submodule update --init --recursive
+
+# run demo
+./Tee.py
+
+# view the log file created
+cat temp/tee.log
 ```
 
 For help on submodules, see my tutorial here: [GabrielStaples.com: `git submodule` “Quick Start” guide](https://gabrielstaples.com/git-submodule-guide/#gsc.tab=0)
