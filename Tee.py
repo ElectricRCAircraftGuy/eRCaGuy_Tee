@@ -37,6 +37,13 @@ def MiB_to_bytes(MiB):
     bytes = MiB * 1024 * 1024
     return bytes
 
+def bytes_to_MiB(bytes):
+    """
+    Convert bytes to Mebibytes.
+    """
+    MiB = bytes / 1024 / 1024
+    return MiB
+
 # Constants
 MAX_LOGFILE_SIZE_BYTES = MiB_to_bytes(25)
 
@@ -137,7 +144,7 @@ class Tee:
             # See: https://stackoverflow.com/a/283719/4561887
             file_size_bytes = f.tell()
 
-            if file_size_bytes > self.max_logfile_size_bytes:
+            if file_size_bytes >= self.max_logfile_size_bytes:
                 f.close()
 
                 # Open a new file with the next log number
