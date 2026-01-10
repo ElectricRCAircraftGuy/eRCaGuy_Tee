@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 
 """
-Tee all stdout messages to the console and to a log file. 
+Tee all stdout messages to the console and to a log file.
 
 Gabriel Staples
 20 Sep. 2024
 
-Prompt to GitHub Copilot to help: 
+Prompt to GitHub Copilot to help:
 > python: tee all stdout output to a file
 
 """
@@ -52,12 +52,14 @@ class Tee:
                  max_logfile_size_bytes=MAX_LOGFILE_SIZE_BYTES):
         """
         Create a Tee object that writes to multiple files, as specified by the paths passed in.
+        - This class mimics the behavior of the Unix `tee` command by writing all stdout output
+          to both the console and to one or more log files.
 
         Args:
-        - paths: one or more paths to write to, as an `os.path` path object or string.
-        - append_lognum: if True, append a log number to the end of the file name, just before the 
-          extension, starting at 1, and incrementing by 1 each time a new file is created by 
-          a manual call to `next_logfiles()`. 
+        - paths: one or more paths to write to, as an `os.path` path object, or string.
+        - append_lognum: if True, append a log number to the end of the file name, just before the
+          extension, starting at 1, and incrementing by 1 each time a new file is created by
+          a manual call to `next_logfiles()`.
             So, if you use `append_lognum=True`, then the log file names as they increment will be
             like this:
             - `my_log_1.log`
@@ -68,25 +70,27 @@ class Tee:
             - `my_log_1.log`
             - `my_log_2.log`
         - immediately_flush: if True, flush the output to the file immediately after each write
-            CAUTION: 
+            CAUTION:
             - Setting `immediately_flush=True` can cause your flash memory to wear faster because of
               how often it has to rewrite the entire file to disk. It is recommended to leave this
               set to its default value of `False` unless you really need to see all data show up in
-              the file immediately after each write. 
+              the file immediately after each write.
             - If you leave `immediately_flush=False`, the file still auto-flushes every so often.
               Testing shows it's about every 1m44sec or 8044 bytes written--I'm not sure which
               triggers the auto-flush exactly, as I only tested it briefly to ensure it auto-flushed
-              at all, which it **does**. 
-                - UPDATE 26 JAN 2025: 
+              at all, which it **does**.
+                - UPDATE 26 JAN 2025:
                     1. It appears to be a **byte-triggered** line-buffered auto-flush, triggered
                        every **~8 kB** written.
                     2. Even with `immediately_flush=False`, no data is EVER lost so long as you
                        properly close the file at the end of your program, because then any cached
                        and unwritten data is flushed to disk at that time.
-        - redirect_stderr: if True, also redirect stderr to stdout and log stderr to the file(s);
-          therefore, you'll be writing both stdout and stderr to the file(s) **and** to the
+        - redirect_stderr: if True, also redirect stderr to stdout and thereby logs stderr to the
+          file(s); therefore, you'll be writing both stdout and stderr to the file(s) **and** to the
           console's **stdout**. If False, only stdout is written to the file(s), and stderr keeps
-          the default behavior of being written to the console's stderr.
+          the default behavior of being written to the console's stderr only.
+        - max_logfile_size_bytes: the maximum size in bytes of each log file before a new log file
+          is created when `next_logfiles()` is called.
         """
 
         self.PATHS = paths
@@ -97,7 +101,7 @@ class Tee:
 
     def _get_numbered_path(self, path_original, logfile_number):
         """
-        Create a new path from this original path, with this logfile number appended to the end 
+        Create a new path from this original path, with this logfile number appended to the end
         just before the file extension.
         """
         root, ext = os.path.splitext(path_original)
@@ -109,7 +113,7 @@ class Tee:
         Begin tee-ing stdout to the console and to one or more log files.
         """
         STARTING_LOGNUMBER = 1
-    
+
         # list of all the active log files
         self.logfiles = [None]*len(self.PATHS)
         # list of the current log numbers for each log file
@@ -138,7 +142,9 @@ class Tee:
     def next_logfiles(self):
         """
         Check all open log files, and if any are larger than `self.max_logfile_size_bytes`, close
-        them and open new log files with incremented log numbers. 
+        them and open new log files with incremented log numbers.
+
+        If the log files are not larger than that size, do nothing.
         """
         for i, f in enumerate(self.logfiles):
             # See: https://stackoverflow.com/a/283719/4561887
@@ -151,7 +157,7 @@ class Tee:
                 self.logfile_numbers[i] += 1
                 new_path = self._get_numbered_path(self.PATHS[i], self.logfile_numbers[i])
                 self.logfiles[i] = open(new_path, "w")
-                
+
                 print(f"Opened new log file at: {new_path}")
 
     def get_logfile_names(self):
@@ -178,9 +184,9 @@ class Tee:
 
     def write(self, obj):
         """
-        Write to the original stdout 
+        Write to the original stdout
         - NB: if `self.redirect_stderr` is True, then this will also write/redirect stderr to the
-          console's stdout. 
+          console's stdout.
         """
 
         self.stdout_bak.write(obj)
@@ -202,11 +208,50 @@ class Tee:
         for f in self.logfiles:
             f.flush()
 
-def main():
+class TeeToRAM(Tee):
+    def __init__(self, append_lognum=True, redirect_stderr=True,
+                 max_logfile_size_bytes=MAX_LOGFILE_SIZE_BYTES):
+        """
+        Similar to the `Tee` class, but instead of writing to disk as data is printed to stdout,
+        it writes to RAM instead, and only writes the log to disk at the end, if desired and
+        manually called to do so.
+
+        - Logging to RAM is useful to avoid excessive wear on flash memory from too many writes, or
+          when the log file name cannot be known beforehand, because it must come from the results
+          of the program run itself (ex: putting a hash of the output into the filename itself).
+        - Therefore, this class allows you to log to RAM, then set the log file name, and then
+          obtain the full string buffer from RAM, and optionally write to a file at the end.
+
+        Args:
+        - append_lognum: same as in `Tee` class.
+        - redirect_stderr: same as in `Tee` class.
+        - max_logfile_size_bytes: same as in `Tee` class; files will be split by this size when
+          written to the disk at the end.
+        """
+
+        super().__init__(*paths, append_lognum=append_lognum,
+                         immediately_flush=immediately_flush,
+                         redirect_stderr=redirect_stderr,
+                         max_logfile_size_bytes=max_logfile_size_bytes)
+
+        #########
+
+        # def #### set_logfiles(self, new_logfile_paths):
+
+
+        # def #### write_ram_to_logfiles(self): ###
+
+def demo_log_to_file():
+    """
+    Demonstration to show how to use the Tee class to log stdout to a file as it is
+    printed to the console.
+    """
+    colors.print_blue("= Demo: log to file as you go =")
+
     MAX_SIZE_BYTES = 10
 
     logpath = os.path.join(SCRIPT_DIRECTORY, "temp", "tee.log")
-    tee = Tee(logpath)                         # default 
+    tee = Tee(logpath, max_logfile_size_bytes=MAX_SIZE_BYTES)                         # default
     # tee = Tee(logpath, append_lognum=False)  # alternative
 
     tee.begin()
@@ -218,18 +263,48 @@ def main():
     print()
     print("This will be printed to the console and written to the file.")
     print("Another line of output.")
-    colors.print_red("This will be printed to the console and written to the file. It is red.")
+    colors.print_yellow("This will be printed to the console and written to the file. "
+                        "It is yellow.")
     print()
 
-    tee.next_logfiles(MAX_SIZE_BYTES)
+    tee.next_logfiles()
     logfile_names = tee.get_logfile_names()
     print(f"logfile_names: {logfile_names}")
 
-    tee.next_logfiles(MAX_SIZE_BYTES)
+    tee.next_logfiles()
     logfile_names = tee.get_logfile_names()
     print(f"logfile_names: {logfile_names}")
 
     tee.end()
+
+def demo_log_to_ram():
+    """
+    Demonstration to show how to use the Tee class to log stdout to RAM as it is
+    printed to the console. It only logs to the file one single time when `.end()` is called.
+    """
+    colors.print_blue("= Demo: log to RAM, write to file only at end =")
+
+    # logpath = os.path.join(SCRIPT_DIRECTORY, "temp", "tee_ram.log")
+    # tee = Tee(logpath, log_to_ram=True)
+
+    # tee.begin()
+
+    # logfile_names = tee.get_logfile_names()
+    # print(f"logfile_names: {logfile_names}")
+
+    # # Example usage
+    # print()
+    # print("This will be printed to the console and written to RAM.")
+    # print("Another line of output.")
+    # colors.print_red("This will be printed to the console and written to RAM. It is red.")
+    # print()
+
+    # tee.end()
+
+def main():
+    demo_log_to_file()
+    print("\n")
+    demo_log_to_ram()
 
 if __name__ == "__main__":
     main()
@@ -241,7 +316,7 @@ Example output:
 
 
 
-eRCaGuy_Tee$ ./Tee.py 
+eRCaGuy_Tee$ ./Tee.py
 logfile_names: ['/home/gabrielstaples/GS-p/dev-p/trade_me/trade_me_dev/eRCaGuy_Tee/temp/tee_1.log']
 
 This will be printed to the console and written to the file.
