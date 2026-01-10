@@ -11,6 +11,13 @@ Prompt to GitHub Copilot to help:
 
 """
 
+# local imports
+# NA
+
+# 3rd-party imports
+# NA
+
+# standard library imports
 import os
 import sys
 
@@ -93,7 +100,7 @@ class Tee:
           is created when `next_logfiles()` is called.
         """
 
-        self.PATHS = paths
+        self.PATHS = paths  # tuple of all the paths to log to
         self.append_lognum = append_lognum
         self.immediately_flush = immediately_flush
         self.redirect_stderr = redirect_stderr
@@ -184,7 +191,7 @@ class Tee:
 
     def write(self, obj):
         """
-        Write to the original stdout
+        Write to the original stdout and to all log files.
         - NB: if `self.redirect_stderr` is True, then this will also write/redirect stderr to the
           console's stdout.
         """
@@ -229,17 +236,87 @@ class TeeToRAM(Tee):
           written to the disk at the end.
         """
 
-        super().__init__(*paths, append_lognum=append_lognum,
-                         immediately_flush=immediately_flush,
+        empty_path = ""  # will be unused, but is required to initialize the parent class
+        super().__init__(empty_path, append_lognum=append_lognum,
+                         immediately_flush=False,
                          redirect_stderr=redirect_stderr,
                          max_logfile_size_bytes=max_logfile_size_bytes)
 
-        #########
+    def begin(self):
+        """
+        Begin tee-ing stdout to the console and to a RAM buffer.
+        """
+        # Save the original stdout, and replace it with the `TeeToRAM` object
+        self.stdout_bak = sys.stdout
+        sys.stdout = self
 
-        # def #### set_logfiles(self, new_logfile_paths):
+        if self.redirect_stderr:
+            # Save the original stderr, and replace it with the Tee object
+            self.stderr_bak = sys.stderr
+            sys.stderr = self
 
+        self.string_buffer = io.StringIO()
 
-        # def #### write_ram_to_logfiles(self): ###
+    def end(self):
+        """
+        End tee-ing stdout to the console and to RAM.
+        - NB: do NOT close the RAM buffer, or else you cannot read from it later!
+        """
+        # Restore sys.stdout
+        sys.stdout = self.stdout_bak
+
+        if self.redirect_stderr:
+            # Restore sys.stderr
+            sys.stderr = self.stderr_bak
+
+    def get_ram_buffer(self):
+        """
+        Get the current RAM string buffer.
+        """
+        return self.string_buffer.getvalue()
+
+    def write(self, obj):
+        """
+        Write to the original stdout and to the RAM buffer.
+        - NB: if `self.redirect_stderr` is True, then this will also write/redirect stderr to the
+          console's stdout.
+        """
+        self.stdout_bak.write(obj)
+        self.string_buffer.write(obj)
+
+    def write_ram_to_logfiles(self, *paths):
+        """
+        Write the RAM buffer to one or more log files specified by the paths passed in.
+        - Write in chunks and roll over to new log files as required if the RAM buffer is larger
+          than `self.max_logfile_size_bytes`.
+        """
+        ram_buffer = self.get_ram_buffer()
+        ram_buffer_bytes = ram_buffer.encode('utf-8')
+        total_size_bytes = len(ram_buffer_bytes)
+
+        start_index = 0
+        log_number = 1
+
+        for path in paths:
+            while start_index < total_size_bytes:
+                end_index = min(start_index + self.max_logfile_size_bytes, total_size_bytes)
+                chunk = ram_buffer_bytes[start_index:end_index]
+
+                if self.append_lognum:
+                    path_to_use = self._get_numbered_path(path, log_number)
+                else:
+                    path_to_use = path
+
+                os.makedirs(os.path.dirname(path_to_use), exist_ok=True)
+
+                with open(path_to_use, "wb") as f:
+                    f.write(chunk)
+
+                print(f"Wrote log file: {path_to_use}")
+
+                start_index = end_index
+                log_number += 1
+
 
 def demo_log_to_file():
     """
