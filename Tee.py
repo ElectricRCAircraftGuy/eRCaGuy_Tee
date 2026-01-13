@@ -145,6 +145,8 @@ class Tee:
             logfile = open(path, "w", encoding="utf-8")
             self.logfiles[i] = logfile
 
+        print(f"Opened log files at: {self.get_logfile_names()}")
+
     def begin(self):
         """
         Begin tee-ing stdout to the console and to one or more log files if `self.log_to_ram_only`
@@ -166,11 +168,16 @@ class Tee:
 
     def next_logfiles(self):
         """
-        Check all open log files, and if any are larger than `self.max_logfile_size_bytes`, close
-        them and open new log files with incremented log numbers.
+        Check all open log files, and if any are larger than or equal to
+        `self.max_logfile_size_bytes`, close them and open new log files with incremented log
+        numbers.
 
         If the log files are not larger than that size, do nothing.
         """
+        if not hasattr(self, 'logfiles'):
+            # nothing to do
+            return
+
         for i, f in enumerate(self.logfiles):
             # See: https://stackoverflow.com/a/283719/4561887
             file_size_bytes = f.tell()
@@ -182,13 +189,17 @@ class Tee:
                 self.logfile_numbers[i] += 1
                 new_path = self._get_numbered_path(self.PATHS[i], self.logfile_numbers[i])
                 self.logfiles[i] = open(new_path, "w", encoding="utf-8")
-
+                # Note: this print **will** be logged to all log files as well.
                 print(f"Opened new log file at: {new_path}")
 
     def get_logfile_names(self):
         """
         Get the names of all the log files.
         """
+        # if self.logfiles doesn't exist, return "NA"
+        if not hasattr(self, 'logfiles'):
+            return ["NA"]
+
         logfile_names_list = [f.name for f in self.logfiles]
         return logfile_names_list
 
@@ -287,7 +298,8 @@ class TeeToRam(Tee):
         """
         Write the RAM buffer to one or more log files specified by the paths passed in.
         - Write in chunks and roll over to new log files as required if the RAM buffer is larger
-          than `self.max_logfile_size_bytes`.
+          than or equal to `self.max_logfile_size_bytes`.
+        - When rolling over to a new file, break on newlines to ensure complete lines only.
         """
         self.PATHS = paths
         self._open_logfiles()
@@ -297,22 +309,31 @@ class TeeToRam(Tee):
         # breaking on newlines once the file exceeds `self.max_logfile_size_bytes`.
 
         total_chars_written = 0
-
         # slicing indices
         I_SLICE_MAX = len(ram_buffer_str)  # the index to stop at to obtain the full ram buffer str
-        i_slice_start = 0
-        i_slice_end = min(i_slice_start + self.max_logfile_size_bytes, I_SLICE_MAX)
+        i_slice_end = 0
+        max_chars_to_fill_up_file = self.max_logfile_size_bytes
 
         # Write the RAM buffer to the log files in chunks <= `self.max_logfile_size_bytes`
         while total_chars_written < len(ram_buffer_str):
+            # Update slicing indices for the next chunk
+            i_slice_start = i_slice_end
+            i_slice_end = min(i_slice_start + max_chars_to_fill_up_file, I_SLICE_MAX)
+            # reset now that it's just been used
+            max_chars_to_fill_up_file = self.max_logfile_size_bytes
+
             if i_slice_end < I_SLICE_MAX:
                 # We need to roll over to a new file, so let's first scan backwards for the last
-                # newline character in this slice, and end the file there.
+                # newline character in this slice, and end the file there to get complete lines
+                # only before rolling over to a new file.
 
                 # Move `i_slice_end` backwards to the last newline character
                 last_newline_index = ram_buffer_str.rfind('\n', i_slice_start, i_slice_end)
                 if last_newline_index != -1:
+                    # a newline char was found
+                    i_slice_end_old = i_slice_end
                     i_slice_end = last_newline_index + 1  # include the newline character
+                    max_chars_to_fill_up_file = i_slice_end_old - i_slice_end
 
             chars_written_expected = i_slice_end - i_slice_start
             # Write the chunk to all log files
@@ -324,10 +345,6 @@ class TeeToRam(Tee):
                     f"{chars_written_expected} chars"
 
             total_chars_written += chars_written_expected
-
-            # Update slicing indices for the next chunk
-            i_slice_start = i_slice_end
-            i_slice_end = min(i_slice_start + self.max_logfile_size_bytes, I_SLICE_MAX) #### this is wrong; should back up to before last newline
 
             # Auto-roll over the log files
             self.next_logfiles()
@@ -366,10 +383,12 @@ def demo_log_to_file():
     tee.next_logfiles()
     logfile_names = tee.get_logfile_names()
     print(f"logfile_names: {logfile_names}")
+    print()
 
     tee.next_logfiles()
     logfile_names = tee.get_logfile_names()
     print(f"logfile_names: {logfile_names}")
+    print()
 
     tee.end()
 
@@ -381,7 +400,7 @@ def demo_log_to_ram():
     """
     colors.print_blue("= Demo: log to RAM, write to file only at end =")
 
-    MAX_SIZE_BYTES = 10
+    MAX_SIZE_BYTES = 20
     logdir = os.path.join(SCRIPT_DIRECTORY, "temp")
 
     teeToRam = TeeToRam(max_logfile_size_bytes=MAX_SIZE_BYTES)
@@ -390,9 +409,8 @@ def demo_log_to_ram():
 
     # Note: `next_logfiles()` and `get_logfile_names()` don't work until we write to files
 
-    #####
-    # logfile_names = teeToRam.get_logfile_names()
-    # print(f"logfile_names: {logfile_names}")
+    logfile_names = teeToRam.get_logfile_names()
+    print(f"logfile_names: {logfile_names}")
 
     # Example usage
     print()
@@ -401,22 +419,23 @@ def demo_log_to_ram():
     colors.print_red("This will be printed to the console and written to RAM. It is red.")
     print()
 
-    #####
-    # teeToRam.next_logfiles()
-    # logfile_names = teeToRam.get_logfile_names()
-    # print(f"logfile_names: {logfile_names}")
+    teeToRam.next_logfiles()
+    logfile_names = teeToRam.get_logfile_names()
+    print(f"logfile_names: {logfile_names}")
+    print()
 
-    #####
-    # teeToRam.next_logfiles()
-    # logfile_names = teeToRam.get_logfile_names()
-    # print(f"logfile_names: {logfile_names}")
+    teeToRam.next_logfiles()
+    logfile_names = teeToRam.get_logfile_names()
+    print(f"logfile_names: {logfile_names}")
+    print()
 
     teeToRam.end()  # Printing will no longer be logged to RAM after this point
+    print("Ended logging to RAM.")
 
     size = teeToRam.get_ram_buffer_used_size_bytes()
     print(f"RAM buffer used size: {size} bytes "
           f"({bytes_to_MiB(size):.6f} MiB)")
-    logfile = os.path.join(logdir, f"teeToRam_{size}.log")
+    logfile = os.path.join(logdir, f"teeToRam_{size}bytes.log")
     teeToRam.write_ram_to_logfiles(logfile)
 
     logfile_names = teeToRam.get_logfile_names()
