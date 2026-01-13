@@ -18,6 +18,7 @@ Prompt to GitHub Copilot to help:
 # NA
 
 # standard library imports
+import io
 import os
 import sys
 
@@ -29,13 +30,14 @@ sys.path.insert(0, f"{SCRIPT_DIRECTORY}")
 
 
 # local imports
-import eRCaGuy_PyColors.ansi_colors as colors
+import eRCaGuy_PyColors.eRCaGuy_PyColors.ansi_colors as colors
 
 # 3rd party imports
 # NA
 
 # other standard library imports
 # NA
+
 
 def MiB_to_bytes(MiB):
     """
@@ -44,6 +46,7 @@ def MiB_to_bytes(MiB):
     bytes = MiB * 1024 * 1024
     return bytes
 
+
 def bytes_to_MiB(bytes):
     """
     Convert bytes to Mebibytes.
@@ -51,8 +54,10 @@ def bytes_to_MiB(bytes):
     MiB = bytes / 1024 / 1024
     return MiB
 
+
 # Constants
 MAX_LOGFILE_SIZE_BYTES = MiB_to_bytes(25)
+
 
 class Tee:
     def __init__(self, *paths, append_lognum=True, immediately_flush=False, redirect_stderr=True,
@@ -230,8 +235,11 @@ class Tee:
         AttributeError: 'Tee' object has no attribute 'flush'
         ```
         """
-        for f in self.logfiles:
-            f.flush()
+        if not self.log_to_ram_only:
+            # Flush all the log files
+            for f in self.logfiles:
+                f.flush()
+
 
 class TeeToRam(Tee):
     def __init__(self, append_lognum=True, redirect_stderr=True,
@@ -311,18 +319,22 @@ class TeeToRam(Tee):
             for f in self.logfiles:
                 chars_written_actual = f.write(ram_buffer_str[i_slice_start:i_slice_end])
                 # Sanity check:
-                assert (chars_written_actual == chars_written_expected,
-                    f"Error: wrote {chars_written_actual} chars, expected to write "
-                    f"{chars_written_expected} chars")
+                assert chars_written_actual == chars_written_expected, \
+                    f"Error: wrote {chars_written_actual} chars, expected to write " \
+                    f"{chars_written_expected} chars"
 
             total_chars_written += chars_written_expected
 
             # Update slicing indices for the next chunk
             i_slice_start = i_slice_end
-            i_slice_end = min(i_slice_start + self.max_logfile_size_bytes, I_SLICE_MAX)
+            i_slice_end = min(i_slice_start + self.max_logfile_size_bytes, I_SLICE_MAX) #### this is wrong; should back up to before last newline
 
             # Auto-roll over the log files
             self.next_logfiles()
+
+        # Close all log files
+        for f in self.logfiles:
+            f.close()
 
 
 def demo_log_to_file():
@@ -361,6 +373,7 @@ def demo_log_to_file():
 
     tee.end()
 
+
 def demo_log_to_ram():
     """
     Demonstration to show how to use the TeeToRAM class to log stdout to RAM as it is
@@ -377,8 +390,9 @@ def demo_log_to_ram():
 
     # Note: `next_logfiles()` and `get_logfile_names()` don't work until we write to files
 
-    logfile_names = teeToRam.get_logfile_names()
-    print(f"logfile_names: {logfile_names}")
+    #####
+    # logfile_names = teeToRam.get_logfile_names()
+    # print(f"logfile_names: {logfile_names}")
 
     # Example usage
     print()
@@ -387,24 +401,26 @@ def demo_log_to_ram():
     colors.print_red("This will be printed to the console and written to RAM. It is red.")
     print()
 
-    teeToRam.next_logfiles()
-    logfile_names = teeToRam.get_logfile_names()
-    print(f"logfile_names: {logfile_names}")
+    #####
+    # teeToRam.next_logfiles()
+    # logfile_names = teeToRam.get_logfile_names()
+    # print(f"logfile_names: {logfile_names}")
 
-    teeToRam.next_logfiles()
-    logfile_names = teeToRam.get_logfile_names()
-    print(f"logfile_names: {logfile_names}")
+    #####
+    # teeToRam.next_logfiles()
+    # logfile_names = teeToRam.get_logfile_names()
+    # print(f"logfile_names: {logfile_names}")
 
     teeToRam.end()  # Printing will no longer be logged to RAM after this point
 
     size = teeToRam.get_ram_buffer_used_size_bytes()
     print(f"RAM buffer used size: {size} bytes "
-          f"({bytes_to_MiB(size):.3f} MiB)")
+          f"({bytes_to_MiB(size):.6f} MiB)")
     logfile = os.path.join(logdir, f"teeToRam_{size}.log")
     teeToRam.write_ram_to_logfiles(logfile)
 
     logfile_names = teeToRam.get_logfile_names()
-    print(f"Log files created: {logfile_names}")
+    print(f"Active log files: {logfile_names}")
 
 
 def main():
