@@ -99,7 +99,7 @@ class Tee:
         - max_logfile_size_bytes: the maximum size in bytes of each log file before a new log file
           is created when `next_logfiles()` is called.
         - _log_to_ram_only: log to RAM only instead of to files as data is printed to stdout.
-          Not intended to be used by users directly; instead, use the `TeeToRAM` subclass.
+          Not intended to be used by users directly; instead, use the `TeeToRam` subclass.
         """
 
         self.PATHS = paths  # tuple of all the paths to log to
@@ -137,7 +137,7 @@ class Tee:
 
             os.makedirs(os.path.dirname(path), exist_ok=True)
 
-            logfile = open(path, "w")
+            logfile = open(path, "w", encoding="utf-8")
             self.logfiles[i] = logfile
 
     def begin(self):
@@ -157,7 +157,7 @@ class Tee:
         if not self.log_to_ram_only:
             self._open_logfiles()
         else:
-            self.string_buffer = io.StringIO()
+            self.stringio_buffer = io.StringIO()
 
     def next_logfiles(self):
         """
@@ -176,7 +176,7 @@ class Tee:
                 # Open a new file with the next log number
                 self.logfile_numbers[i] += 1
                 new_path = self._get_numbered_path(self.PATHS[i], self.logfile_numbers[i])
-                self.logfiles[i] = open(new_path, "w")
+                self.logfiles[i] = open(new_path, "w", encoding="utf-8")
 
                 print(f"Opened new log file at: {new_path}")
 
@@ -220,7 +220,7 @@ class Tee:
                 if self.immediately_flush:
                     f.flush() # Ensure the output is written immediately
         else:
-            self.string_buffer.write(obj)
+            self.stringio_buffer.write(obj)
 
     def flush(self):
         """
@@ -233,7 +233,7 @@ class Tee:
         for f in self.logfiles:
             f.flush()
 
-class TeeToRAM(Tee):
+class TeeToRam(Tee):
     def __init__(self, append_lognum=True, redirect_stderr=True,
                  max_logfile_size_bytes=MAX_LOGFILE_SIZE_BYTES):
         """
@@ -264,7 +264,16 @@ class TeeToRAM(Tee):
         """
         Get the current RAM string buffer.
         """
-        return self.string_buffer.getvalue()
+        return self.stringio_buffer.getvalue()
+
+    def get_ram_buffer_used_size_bytes(self):
+        """
+        Get the current RAM string buffer used size in bytes.
+        Uses UTF-8 encoding to match file writing behavior.
+        """
+        ram_buffer_str = self.get_ram_buffer_str()
+        ram_buffer_size_bytes = len(ram_buffer_str.encode('utf-8'))
+        return ram_buffer_size_bytes
 
     def write_ram_to_logfiles(self, *paths):
         """
@@ -324,8 +333,8 @@ def demo_log_to_file():
     colors.print_blue("= Demo: log to file as you go =")
 
     MAX_SIZE_BYTES = 10
-
     logpath = os.path.join(SCRIPT_DIRECTORY, "temp", "tee.log")
+
     tee = Tee(logpath, max_logfile_size_bytes=MAX_SIZE_BYTES)                         # default
     # tee = Tee(logpath, append_lognum=False)  # alternative
 
@@ -354,32 +363,55 @@ def demo_log_to_file():
 
 def demo_log_to_ram():
     """
-    Demonstration to show how to use the Tee class to log stdout to RAM as it is
-    printed to the console. It only logs to the file one single time when `.end()` is called.
+    Demonstration to show how to use the TeeToRAM class to log stdout to RAM as it is
+    printed to the console. It only writes to log files at the end when manually called.
     """
     colors.print_blue("= Demo: log to RAM, write to file only at end =")
 
-    # logpath = os.path.join(SCRIPT_DIRECTORY, "temp", "tee_ram.log")
-    # tee = Tee(logpath, log_to_ram=True)
+    MAX_SIZE_BYTES = 10
+    logdir = os.path.join(SCRIPT_DIRECTORY, "temp")
 
-    # tee.begin()
+    teeToRam = TeeToRam(max_logfile_size_bytes=MAX_SIZE_BYTES)
 
-    # logfile_names = tee.get_logfile_names()
-    # print(f"logfile_names: {logfile_names}")
+    teeToRam.begin()
 
-    # # Example usage
-    # print()
-    # print("This will be printed to the console and written to RAM.")
-    # print("Another line of output.")
-    # colors.print_red("This will be printed to the console and written to RAM. It is red.")
-    # print()
+    # Note: `next_logfiles()` and `get_logfile_names()` don't work until we write to files
 
-    # tee.end()
+    logfile_names = teeToRam.get_logfile_names()
+    print(f"logfile_names: {logfile_names}")
+
+    # Example usage
+    print()
+    print("This will be printed to the console and written to RAM.")
+    print("Another line of output.")
+    colors.print_red("This will be printed to the console and written to RAM. It is red.")
+    print()
+
+    teeToRam.next_logfiles()
+    logfile_names = teeToRam.get_logfile_names()
+    print(f"logfile_names: {logfile_names}")
+
+    teeToRam.next_logfiles()
+    logfile_names = teeToRam.get_logfile_names()
+    print(f"logfile_names: {logfile_names}")
+
+    teeToRam.end()  # Printing will no longer be logged to RAM after this point
+
+    size = teeToRam.get_ram_buffer_used_size_bytes()
+    print(f"RAM buffer used size: {size} bytes "
+          f"({bytes_to_MiB(size):.3f} MiB)")
+    logfile = os.path.join(logdir, f"teeToRam_{size}.log")
+    teeToRam.write_ram_to_logfiles(logfile)
+
+    logfile_names = teeToRam.get_logfile_names()
+    print(f"Log files created: {logfile_names}")
+
 
 def main():
     demo_log_to_file()
     print("\n")
     demo_log_to_ram()
+
 
 if __name__ == "__main__":
     main()
