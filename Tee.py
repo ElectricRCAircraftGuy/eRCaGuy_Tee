@@ -56,7 +56,7 @@ MAX_LOGFILE_SIZE_BYTES = MiB_to_bytes(25)
 
 class Tee:
     def __init__(self, *paths, append_lognum=True, immediately_flush=False, redirect_stderr=True,
-                 max_logfile_size_bytes=MAX_LOGFILE_SIZE_BYTES):
+                 max_logfile_size_bytes=MAX_LOGFILE_SIZE_BYTES, _log_to_ram_only=False):
         """
         Create a Tee object that writes to multiple files, as specified by the paths passed in.
         - This class mimics the behavior of the Unix `tee` command by writing all stdout output
@@ -98,6 +98,8 @@ class Tee:
           the default behavior of being written to the console's stderr only.
         - max_logfile_size_bytes: the maximum size in bytes of each log file before a new log file
           is created when `next_logfiles()` is called.
+        - _log_to_ram_only: log to RAM only instead of to files as data is printed to stdout.
+          Not intended to be used by users directly; instead, use the `TeeToRAM` subclass.
         """
 
         self.PATHS = paths  # tuple of all the paths to log to
@@ -105,6 +107,7 @@ class Tee:
         self.immediately_flush = immediately_flush
         self.redirect_stderr = redirect_stderr
         self.max_logfile_size_bytes = max_logfile_size_bytes
+        self.log_to_ram_only = _log_to_ram_only
 
     def _get_numbered_path(self, path_original, logfile_number):
         """
@@ -115,9 +118,9 @@ class Tee:
         new_path = f"{root}_{logfile_number}{ext}"
         return new_path
 
-    def begin(self):
+    def _open_logfiles(self):
         """
-        Begin tee-ing stdout to the console and to one or more log files.
+        Open all log files for writing.
         """
         STARTING_LOGNUMBER = 1
 
@@ -137,6 +140,11 @@ class Tee:
             logfile = open(path, "w")
             self.logfiles[i] = logfile
 
+    def begin(self):
+        """
+        Begin tee-ing stdout to the console and to one or more log files if `self.log_to_ram_only`
+        is False, or to a RAM buffer only otherwise.
+        """
         # Save the original stdout, and replace it with the Tee object
         self.stdout_bak = sys.stdout
         sys.stdout = self
@@ -145,6 +153,11 @@ class Tee:
             # Save the original stderr, and replace it with the Tee object
             self.stderr_bak = sys.stderr
             sys.stderr = self
+
+        if not self.log_to_ram_only:
+            self._open_logfiles()
+        else:
+            self.string_buffer = io.StringIO()
 
     def next_logfiles(self):
         """
@@ -176,11 +189,13 @@ class Tee:
 
     def end(self):
         """
-        End tee-ing stdout to the console and to one or more log files.
+        End tee-ing stdout to the console and to one or more log files or to RAM.
+        - NB: do NOT close the RAM buffer, or else you cannot read from it later!
         """
-        # Close all the files
-        for f in self.logfiles:
-            f.close()
+        if not self.log_to_ram_only:
+            # Close all the files
+            for f in self.logfiles:
+                f.close()
 
         # Restore sys.stdout
         sys.stdout = self.stdout_bak
@@ -191,18 +206,21 @@ class Tee:
 
     def write(self, obj):
         """
-        Write to the original stdout and to all log files.
+        Write to the original stdout and to all log files or to RAM.
         - NB: if `self.redirect_stderr` is True, then this will also write/redirect stderr to the
           console's stdout.
         """
 
         self.stdout_bak.write(obj)
 
-        # Write to all the log files
-        for f in self.logfiles:
-            f.write(obj)
-            if self.immediately_flush:
-                f.flush() # Ensure the output is written immediately
+        if not self.log_to_ram_only:
+            # Write to all the log files
+            for f in self.logfiles:
+                f.write(obj)
+                if self.immediately_flush:
+                    f.flush() # Ensure the output is written immediately
+        else:
+            self.string_buffer.write(obj)
 
     def flush(self):
         """
@@ -236,53 +254,17 @@ class TeeToRAM(Tee):
           written to the disk at the end.
         """
 
-        empty_path = ""  # will be unused, but is required to initialize the parent class
-        super().__init__(empty_path, append_lognum=append_lognum,
+        super().__init__(None, append_lognum=append_lognum,
                          immediately_flush=False,
                          redirect_stderr=redirect_stderr,
-                         max_logfile_size_bytes=max_logfile_size_bytes)
+                         max_logfile_size_bytes=max_logfile_size_bytes,
+                         _log_to_ram_only=True)
 
-    def begin(self):
-        """
-        Begin tee-ing stdout to the console and to a RAM buffer.
-        """
-        # Save the original stdout, and replace it with the `TeeToRAM` object
-        self.stdout_bak = sys.stdout
-        sys.stdout = self
-
-        if self.redirect_stderr:
-            # Save the original stderr, and replace it with the Tee object
-            self.stderr_bak = sys.stderr
-            sys.stderr = self
-
-        self.string_buffer = io.StringIO()
-
-    def end(self):
-        """
-        End tee-ing stdout to the console and to RAM.
-        - NB: do NOT close the RAM buffer, or else you cannot read from it later!
-        """
-        # Restore sys.stdout
-        sys.stdout = self.stdout_bak
-
-        if self.redirect_stderr:
-            # Restore sys.stderr
-            sys.stderr = self.stderr_bak
-
-    def get_ram_buffer(self):
+    def get_ram_buffer_str(self):
         """
         Get the current RAM string buffer.
         """
         return self.string_buffer.getvalue()
-
-    def write(self, obj):
-        """
-        Write to the original stdout and to the RAM buffer.
-        - NB: if `self.redirect_stderr` is True, then this will also write/redirect stderr to the
-          console's stdout.
-        """
-        self.stdout_bak.write(obj)
-        self.string_buffer.write(obj)
 
     def write_ram_to_logfiles(self, *paths):
         """
@@ -290,32 +272,48 @@ class TeeToRAM(Tee):
         - Write in chunks and roll over to new log files as required if the RAM buffer is larger
           than `self.max_logfile_size_bytes`.
         """
-        ram_buffer = self.get_ram_buffer()
-        ram_buffer_bytes = ram_buffer.encode('utf-8')
-        total_size_bytes = len(ram_buffer_bytes)
+        self.PATHS = paths
+        self._open_logfiles()
+        ram_buffer_str = self.get_ram_buffer_str()
 
-        start_index = 0
-        log_number = 1
+        # Now write the RAM buffer to the log files in chunks, rolling over to new files as needed,
+        # breaking on newlines once the file exceeds `self.max_logfile_size_bytes`.
 
-        for path in paths:
-            while start_index < total_size_bytes:
-                end_index = min(start_index + self.max_logfile_size_bytes, total_size_bytes)
-                chunk = ram_buffer_bytes[start_index:end_index]
+        total_chars_written = 0
 
-                if self.append_lognum:
-                    path_to_use = self._get_numbered_path(path, log_number)
-                else:
-                    path_to_use = path
+        # slicing indices
+        I_SLICE_MAX = len(ram_buffer_str)  # the index to stop at to obtain the full ram buffer str
+        i_slice_start = 0
+        i_slice_end = min(i_slice_start + self.max_logfile_size_bytes, I_SLICE_MAX)
 
-                os.makedirs(os.path.dirname(path_to_use), exist_ok=True)
+        # Write the RAM buffer to the log files in chunks <= `self.max_logfile_size_bytes`
+        while total_chars_written < len(ram_buffer_str):
+            if i_slice_end < I_SLICE_MAX:
+                # We need to roll over to a new file, so let's first scan backwards for the last
+                # newline character in this slice, and end the file there.
 
-                with open(path_to_use, "wb") as f:
-                    f.write(chunk)
+                # Move `i_slice_end` backwards to the last newline character
+                last_newline_index = ram_buffer_str.rfind('\n', i_slice_start, i_slice_end)
+                if last_newline_index != -1:
+                    i_slice_end = last_newline_index + 1  # include the newline character
 
-                print(f"Wrote log file: {path_to_use}")
+            chars_written_expected = i_slice_end - i_slice_start
+            # Write the chunk to all log files
+            for f in self.logfiles:
+                chars_written_actual = f.write(ram_buffer_str[i_slice_start:i_slice_end])
+                # Sanity check:
+                assert (chars_written_actual == chars_written_expected,
+                    f"Error: wrote {chars_written_actual} chars, expected to write "
+                    f"{chars_written_expected} chars")
 
-                start_index = end_index
-                log_number += 1
+            total_chars_written += chars_written_expected
+
+            # Update slicing indices for the next chunk
+            i_slice_start = i_slice_end
+            i_slice_end = min(i_slice_start + self.max_logfile_size_bytes, I_SLICE_MAX)
+
+            # Auto-roll over the log files
+            self.next_logfiles()
 
 
 def demo_log_to_file():
